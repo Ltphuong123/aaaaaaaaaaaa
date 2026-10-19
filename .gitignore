@@ -11,3 +11,9 @@ models/
 data/
 lora/
 output/
+
+# Local Windows installation artifacts
+/.downloads/
+/.runtime/
+/tools/
+/pretrained_models/

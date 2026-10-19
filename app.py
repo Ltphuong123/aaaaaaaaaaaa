@@ -3,7 +3,9 @@ import re
 import sys
 import logging
 import random
+import time
 import numpy as np
+import torch
 import gradio as gr
 from typing import Optional, Tuple
 from funasr import AutoModel
@@ -229,9 +231,17 @@ class VoxCPMDemo:
         self.device = resolve_runtime_device(device, "cuda")
         logger.info(f"Running VoxCPM on device: {self.device}")
         self.optimize = self.device.startswith("cuda")
+        self.release_cuda_cache = os.environ.get("VOXCPM_RELEASE_CUDA_CACHE") == "1"
+        if self.device.startswith("cuda") and os.environ.get("VOXCPM_GPU_MEMORY_FRACTION"):
+            torch.cuda.set_per_process_memory_fraction(
+                float(os.environ["VOXCPM_GPU_MEMORY_FRACTION"]),
+                "cuda:0" if self.device == "cuda" else self.device,
+            )
 
         self.asr_model_id = "iic/SenseVoiceSmall"
-        self.asr_device = "cuda:0" if self.device.startswith("cuda") else "cpu"
+        self.asr_device = os.environ.get(
+            "VOXCPM_ASR_DEVICE", "cuda:0" if self.device.startswith("cuda") else "cpu"
+        )
         self.asr_model: Optional[AutoModel] = None
 
         self.voxcpm_model: Optional[voxcpm.VoxCPM] = None
@@ -246,6 +256,8 @@ class VoxCPMDemo:
             optimize=self.optimize,
             device=self.device,
         )
+        if self.release_cuda_cache and self.device.startswith("cuda"):
+            torch.cuda.empty_cache()
         logger.info("Model loaded successfully.")
         return self.voxcpm_model
 
@@ -343,7 +355,20 @@ class VoxCPMDemo:
             inference_timesteps=inference_timesteps,
             seed=seed,
         )
-        wav = current_model.generate(**generate_kwargs)
+        started = time.perf_counter()
+        if self.release_cuda_cache and self.device.startswith("cuda"):
+            torch.cuda.empty_cache()
+        try:
+            wav = current_model.generate(**generate_kwargs)
+        finally:
+            if self.release_cuda_cache and self.device.startswith("cuda"):
+                torch.cuda.empty_cache()
+                logger.info(
+                    "CUDA allocated=%.0f MiB reserved=%.0f MiB; generation=%.2fs",
+                    torch.cuda.memory_allocated(self.device) / 2**20,
+                    torch.cuda.memory_reserved(self.device) / 2**20,
+                    time.perf_counter() - started,
+                )
         last_successful_seed = getattr(current_model.tts_model, "last_successful_seed", seed)
         return (current_model.tts_model.sample_rate, wav, last_successful_seed)
 

@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#204b3e">
+  <title>Giọng Nhà — Giọng của bạn, câu chuyện của bạn</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <svg class="svg-defs" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <symbol id="icon-wave" viewBox="0 0 24 24"><path d="M4 10v4m4-8v12m4-15v18m4-15v12m4-8v4"/></symbol>
+    <symbol id="icon-text" viewBox="0 0 24 24"><path d="M5 5h14M12 5v14m-4 0h8M5 9V5m14 4V5"/></symbol>
+    <symbol id="icon-library" viewBox="0 0 24 24"><rect x="3" y="4" width="5" height="16" rx="1.5"/><rect x="11" y="4" width="5" height="16" rx="1.5"/><path d="m18 5 3 14"/></symbol>
+    <symbol id="icon-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="icon-arrow" viewBox="0 0 24 24"><path d="M5 12h14m-5-5 5 5-5 5"/></symbol>
+    <symbol id="icon-download" viewBox="0 0 24 24"><path d="M12 3v12m-4-4 4 4 4-4M4 16v4h16v-4"/></symbol>
+    <symbol id="icon-spark" viewBox="0 0 24 24"><path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5Z"/></symbol>
+    <symbol id="icon-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+    <symbol id="icon-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+  </svg>
+  <aside class="sidebar">
+    <a class="brand" href="#read" aria-label="Giọng Nhà, trang chính"><span class="brand-mark"><svg><use href="#icon-wave"/></svg></span><span>Giọng Nhà<span class="brand-caption">MỖI GIỌNG MỘT CÂU CHUYỆN</span></span></a>
+    <div class="nav-label">KHÔNG GIAN CỦA BẠN</div>
+    <nav aria-label="Điều hướng chính">
+      <a class="nav-item active" href="#read" data-page="read"><svg><use href="#icon-text"/></svg>Đọc văn bản</a>
+      <a class="nav-item" href="#library" data-page="library"><svg><use href="#icon-library"/></svg>Thư viện giọng<span class="nav-count" id="voice-count">0</span></a>
+      <a class="nav-item" href="#create" data-page="create"><svg><use href="#icon-plus"/></svg>Tạo giọng mới</a>
+    </nav>
+    <div class="sidebar-note"><span class="little-spark">✦</span><p>Một lần lưu giọng.<br>Thật nhiều lần kể chuyện.</p><a href="#create">Tạo giọng của riêng bạn <span>↗</span></a></div>
+    <div class="local-status"><span class="status-dot"></span><div>Không gian riêng của bạn<small>Giọng được lưu trên máy này</small></div></div>
+  </aside>
+  <main>
+    <header class="topbar"><span>PHÒNG THU CỦA BẠN</span><span class="topbar-badge"><span class="status-dot"></span>VoxCPM2 · Chạy trên máy</span></header>
+
+    <section id="page-read" class="page active" aria-labelledby="read-title">
+      <div class="page-heading"><div><span class="eyebrow">TỪ CON CHỮ ĐẾN ÂM THANH</span><h1 id="read-title">Để câu chữ cất lời.</h1><p>Chọn một giọng quen, viết điều muốn nói. Phần còn lại để Giọng Nhà.</p></div><a class="button button-light" href="#create"><svg><use href="#icon-plus"/></svg>Tạo giọng mới</a></div>
+      <div class="read-grid">
+        <section class="panel editor-panel">
+          <div class="panel-heading"><h2>Nội dung cần đọc</h2><button class="text-button" id="fill-example" type="button">Thử một đoạn mẫu</button></div>
+          <label class="sr-only" for="read-text">Văn bản cần chuyển thành giọng nói</label>
+          <textarea id="read-text" maxlength="6000" placeholder="Viết câu chuyện, lời nhắn hay bất cứ điều gì bạn muốn nghe…"></textarea>
+          <div class="editor-footer"><span>Tiếng Việt và nhiều ngôn ngữ khác</span><span id="text-count">0 / 6.000</span></div>
+          <div class="read-settings"><label for="read-mode">Chế độ tạo bản đọc</label><select id="read-mode" aria-describedby="read-mode-hint"><option value="fast">Nhanh</option><option value="balanced" selected>Cân bằng</option><option value="faithful">Ưu tiên giống mẫu</option></select><p id="read-mode-hint">Giữ chi tiết giọng mẫu, giảm thời gian xử lý so với chế độ ưu tiên giống mẫu.</p></div>
+          <div class="editor-action"><span class="subtle-note">Đoạn dài sẽ được đọc lần lượt và ghép thành một file.</span><button id="speak-button" class="button button-primary"><svg><use href="#icon-wave"/></svg>Tạo giọng đọc</button></div>
+        </section>
+        <aside class="read-side">
+          <section class="panel selected-voice-panel"><div class="panel-heading"><h2>Giọng đang dùng</h2><a href="#library" class="text-button">Đổi giọng ↗</a></div><div id="selected-voice" class="selected-voice"></div><label class="audio-label" for="voice-preview">NGHE GIỌNG MẪU</label><audio id="voice-preview" controls preload="none"></audio></section>
+          <div class="quiet-card"><svg><use href="#icon-library"/></svg><div><strong>Giọng quen, luôn sẵn sàng.</strong><p>Giọng đã lưu có thể dùng lại mỗi lần bạn mở tool.</p></div></div>
+        </aside>
+      </div>
+      <section id="read-progress" class="progress-panel" hidden aria-live="polite"><span class="spinner"></span><div><strong id="read-progress-text">Đang chuẩn bị giọng đọc…</strong><p>Lần đầu có thể lâu hơn vì cần nạp mô hình. Bạn có thể chuyển sang mục khác trong khi chờ.</p></div></section>
+      <section id="read-result" class="panel result-panel" hidden><div class="result-title"><span class="result-icon"><svg><use href="#icon-check"/></svg></span><div><h2>Bản đọc của bạn đã sẵn sàng</h2><p id="result-detail"></p></div><a id="read-download" class="button button-light" download><svg><use href="#icon-download"/></svg>Tải WAV</a></div><audio id="read-audio" controls preload="metadata"></audio></section>
+      <section class="recent-section"><div class="section-heading"><h2><svg><use href="#icon-clock"/></svg>Những bản đọc gần đây</h2><span>Lưu ngay trên máy</span></div><div id="history-list"></div></section>
+    </section>
+
+    <section id="page-library" class="page" aria-labelledby="library-title">
+      <div class="page-heading"><div><span class="eyebrow">MỖI GIỌNG MỘT SẮC THÁI</span><h1 id="library-title">Thư viện giọng của bạn.</h1><p>Nghe thử, chọn giọng yêu thích và bắt đầu một câu chuyện mới.</p></div><a href="#create" class="button button-primary"><svg><use href="#icon-plus"/></svg>Thêm giọng mới</a></div>
+      <div class="library-toolbar"><div class="filter-group" role="group" aria-label="Lọc giọng"><button class="filter active" data-filter="all">Tất cả giọng</button><button class="filter" data-filter="preset">Có sẵn</button><button class="filter" data-filter="created">Của tôi</button></div><label class="search-field"><span aria-hidden="true">⌕</span><input id="voice-search" type="search" placeholder="Tìm giọng theo tên…" aria-label="Tìm giọng theo tên"></label></div>
+      <div id="voice-grid" class="voice-grid"></div><p class="library-footnote">Các giọng có sẵn được tạo bằng VoxCPM2 và lưu riêng cho tool này. Bạn có thể tạo thêm bất cứ lúc nào.</p>
+    </section>
+
+    <section id="page-create" class="page" aria-labelledby="create-title">
+      <div class="page-heading"><div><span class="eyebrow">ĐẦY ĐỦ CHẾ ĐỘ CỦA VOXCPM2</span><h1 id="create-title">Tạo giọng theo cách của bạn.</h1><p>Thiết kế giọng mới hoặc sao chép từ âm thanh mẫu. Nghe thử, đặt tên và lưu để dùng lại.</p></div></div>
+      <div class="create-grid"><form id="design-form" class="panel create-panel">
+        <div class="create-section-heading"><label class="field-label" for="reference-upload">Âm thanh tham chiếu <span class="optional">tùy chọn</span></label><span id="creation-mode" class="voice-badge">Thiết kế giọng</span></div>
+        <input id="reference-upload" type="file" accept="audio/*,.wav,.mp3,.m4a,.ogg,.flac,.webm" hidden>
+        <div id="reference-dropzone" class="reference-dropzone"><svg><use href="#icon-wave"/></svg><strong>Tải lên hoặc thu âm một giọng mẫu</strong><p>Kéo thả file vào đây. Bỏ trống nếu bạn muốn tạo giọng mới.</p><div class="reference-actions"><button id="choose-reference" class="button button-light" type="button">Chọn âm thanh</button><button id="record-reference" class="button button-light" type="button"><span class="record-dot"></span><span id="record-label">Thu âm</span></button><span id="record-duration" hidden>0:00</span></div><small>WAV, MP3, M4A, OGG, FLAC, WebM · Tối đa 30 MB / 60 giây</small></div>
+        <p id="reference-status" class="reference-status" role="status" aria-live="polite"></p>
+        <div id="reference-loaded" class="reference-loaded" hidden><div class="reference-file-row"><div><strong id="reference-name"></strong><span id="reference-detail"></span></div><button id="remove-reference" type="button" class="text-button">Bỏ mẫu</button></div><audio id="reference-audio" controls preload="metadata"></audio></div>
+        <label class="toggle-row clone-toggle"><input id="ultimate-mode" type="checkbox" disabled><span><strong>Sao chép giọng chi tiết <span class="optional">Ultimate Cloning</span></strong><small>Dùng cả âm thanh và lời mẫu để giữ âm sắc, nhịp và cách thể hiện. Thêm âm thanh để bật chế độ này.</small></span></label>
+        <div id="transcript-panel" class="transcript-panel" hidden><div class="transcript-heading"><label class="field-label" for="reference-transcript">Lời của âm thanh mẫu</label><div><label class="sr-only" for="asr-language">Ngôn ngữ nhận dạng</label><select id="asr-language"><option value="auto">Tự nhận diện</option><option value="vi">Tiếng Việt</option><option value="en">English</option><option value="zh">中文</option><option value="ja">日本語</option><option value="ko">한국어</option><option value="fr">Français</option><option value="de">Deutsch</option><option value="es">Español</option></select><button id="transcribe-reference" class="button button-light" type="button">Nhận dạng lời mẫu</button></div></div><textarea id="reference-transcript" rows="4" maxlength="12000" placeholder="Lời mẫu sẽ tự điền khi nhận dạng xong. Bạn cũng có thể nhập hoặc sửa lại ở đây."></textarea><p id="transcript-status" class="field-hint" role="status">Hãy kiểm tra để lời mẫu khớp đúng với âm thanh; đây không phải nội dung mới cần đọc.</p></div>
+        <div id="control-panel"><label class="field-label" for="voice-description">Chỉ dẫn điều khiển <span class="optional">tùy chọn</span></label><textarea id="voice-description" class="description-input" maxlength="500" placeholder="Ví dụ: A warm young woman, gentle tone, slightly slower pace / 年轻女性，温柔甜美"></textarea><p class="field-hint compact-hint">Mô tả giới tính, độ tuổi, âm sắc, cảm xúc và nhịp đọc. VoxCPM hỗ trợ chỉ dẫn tiếng Anh và tiếng Trung; bạn cũng có thể thử các mô tả tiếng Việt bên dưới.</p>
+          <div class="description-chips"><button type="button" data-description="Giọng nữ trẻ, dịu dàng, ấm áp, nói tiếng Việt rõ ràng, nhịp đọc nhẹ nhàng.">Nữ dịu dàng</button><button type="button" data-description="Giọng nam trưởng thành, trầm ấm, điềm tĩnh, nói tiếng Việt rõ ràng, phong cách kể chuyện.">Nam trầm ấm</button><button type="button" data-description="Giọng nữ trẻ, tươi sáng, vui vẻ và thân thiện, nói tiếng Việt rõ ràng, nhịp đọc tự nhiên.">Nữ tươi sáng</button></div></div>
+        <label class="field-label" for="sample-text">Văn bản cần đọc</label><textarea id="sample-text" class="sample-input" maxlength="6000" required>Xin chào, rất vui được gặp bạn. Mỗi ngày là một cơ hội để bắt đầu một câu chuyện mới. Hãy cùng tôi chậm lại một chút, lắng nghe và tận hưởng những điều giản dị quanh mình.</textarea><div class="sample-footer"><p class="field-hint">Đoạn đầu sẽ được lưu làm mẫu giọng cho những lần đọc sau.</p><span id="sample-count">0 / 6.000</span></div>
+        <details class="advanced-settings" id="advanced-settings"><summary>Cài đặt nâng cao <span>CFG · số bước · seed</span></summary><div class="advanced-body">
+          <label class="toggle-row"><input id="denoise-reference" type="checkbox"><span><strong>Khử nhiễu âm thanh mẫu</strong><small>Dùng ZipEnhancer làm sạch mẫu trước khi sao chép giọng.</small></span></label>
+          <label class="toggle-row"><input id="normalize-text" type="checkbox"><span><strong>Chuẩn hóa văn bản</strong><small>Chuẩn hóa số, ngày tháng và từ viết tắt bằng WeText của VoxCPM, ưu tiên tiếng Anh/Trung.</small></span></label>
+          <div class="slider-setting"><label for="cfg-slider">CFG — mức bám sát chỉ dẫn <output id="cfg-value" for="cfg-slider">2.0</output></label><input id="cfg-slider" type="range" min="1" max="3" step="0.1" value="2"><p>Mức cao bám sát chỉ dẫn hoặc giọng mẫu hơn; mức thấp cho phép biến đổi tự do hơn.</p></div>
+          <div class="slider-setting"><label for="steps-slider">Số bước suy luận LocDiT <output id="steps-value" for="steps-slider">10</output></label><input id="steps-slider" type="range" min="1" max="50" step="1" value="10"><p>Nhiều bước có thể cải thiện chất lượng nhưng cần thêm thời gian.</p></div>
+          <div class="seed-setting"><label for="seed-input">Seed<input id="seed-input" type="number" min="0" max="4294967295" step="1" value="42" required disabled></label><label class="toggle-row"><input id="random-seed" type="checkbox" checked><span><strong>Seed ngẫu nhiên</strong><small>Tạo một seed mới cho mỗi lần chạy.</small></span></label></div><p class="field-hint compact-hint">Bỏ chọn để nhập seed cố định. Seed thực tế được cập nhật sau khi tạo xong.</p>
+        </div></details>
+        <button id="design-button" class="button button-primary full-width" type="submit"><svg><use href="#icon-spark"/></svg>Tạo và nghe thử</button>
+      </form>
+      <aside class="create-aside"><section id="design-empty" class="panel design-placeholder"><div class="wave-art" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><h2>Một giọng mới sắp ra đời.</h2><p>Giọng thử sẽ xuất hiện ở đây.<br>Khi ưng ý, bạn chỉ cần đặt tên và lưu lại.</p></section><section id="design-progress" class="progress-panel design-progress" hidden aria-live="polite"><span class="spinner"></span><div><strong id="design-progress-text">Đang tạo giọng mới…</strong><p>Bạn có thể chuyển sang mục khác trong khi chờ.</p></div></section><section id="design-result" class="panel save-panel" hidden><span class="eyebrow">NGHE THỬ GIỌNG VỪA TẠO</span><h2>Giọng này có hợp với bạn?</h2><audio id="design-audio" controls preload="metadata"></audio><p id="design-result-meta" class="render-meta"></p><label class="field-label" for="voice-name">Đặt tên và lưu giọng</label><input id="voice-name" maxlength="60" placeholder="Ví dụ: Giọng kể chuyện của tôi"><p class="field-hint">Giọng và cấu hình được lưu trên máy, dùng lại cả khi tắt và mở ứng dụng.</p><button id="save-button" class="button button-primary full-width"><svg><use href="#icon-library"/></svg>Lưu vào thư viện</button><a id="design-download" class="button button-ghost full-width" download>Tải WAV</a><div id="saved-message" hidden class="saved-message" role="status"></div></section>
+        <section class="panel mode-guide"><span class="eyebrow">BA CÁCH TẠO GIỌNG</span><div><strong>01 · Thiết kế giọng mới</strong><p>Không cần âm thanh mẫu. Mô tả giọng mong muốn, hoặc bỏ trống để mô hình tự chọn.</p></div><div><strong>02 · Sao chép có điều khiển</strong><p>Thêm giọng mẫu và chỉ dẫn cảm xúc, nhịp hoặc phong cách. Giữ chế độ sao chép chi tiết ở trạng thái tắt.</p></div><div><strong>03 · Sao chép giọng chi tiết</strong><p>Bật Ultimate Cloning và nhập đúng lời mẫu. Chế độ này dùng lời mẫu thay cho chỉ dẫn điều khiển.</p></div></section>
+        <section class="panel instruction-examples"><span class="eyebrow">THỬ MỘT CHỈ DẪN MẪU</span><button type="button" data-example="gentle"><strong>Nữ nhẹ nhàng, trầm lắng</strong><span>A young girl with a soft, sweet voice…</span></button><button type="button" data-example="relaxed"><strong>Nam thư thái, gần gũi</strong><span>Relaxed young male voice, very casual…</span></button><button type="button" data-example="chinese"><strong>Giọng kể chuyện tiếng Trung</strong><span>中年男性，低沉温暖，语速舒缓…</span></button><p class="field-hint">Bấm để điền chỉ dẫn và văn bản mẫu. Bạn có thể sửa nội dung trước khi tạo.</p></section>
+      </aside></div>
+    </section>
+    <footer class="page-footer"><span>GIỌNG NHÀ</span><span>Giữ lại một giọng. Kể thêm nhiều điều.</span><span>Âm thanh tạo bằng AI</span></footer>
+  </main>
+  <div id="toast" class="toast" role="status" hidden></div>
+  <template id="voice-card-template"><article class="voice-card"><div class="voice-card-top"><div class="voice-avatar"><svg><use href="#icon-wave"/></svg></div><span class="voice-badge"></span></div><h2 class="voice-name"></h2><p class="voice-description"></p><audio controls preload="metadata" aria-label="Nghe giọng mẫu"></audio><div class="voice-card-footer"><span class="voice-duration"></span><button class="button button-light choose-voice">Dùng giọng này <svg><use href="#icon-arrow"/></svg></button></div></article></template>
+</body>
+</html>
