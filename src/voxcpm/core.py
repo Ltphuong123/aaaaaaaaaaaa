@@ -9,6 +9,7 @@ from huggingface_hub import snapshot_download
 from .model.voxcpm import VoxCPMModel, LoRAConfig
 from .model.voxcpm2 import VoxCPM2Model
 from .model.utils import next_and_close
+from .utils.prompt_cache import PromptFeatureCache
 
 
 def resolve_model_path(
@@ -51,6 +52,7 @@ class VoxCPM:
         device: str | None = None,
         lora_config: Optional[LoRAConfig] = None,
         lora_weights_path: Optional[str] = None,
+        prompt_cache_size: int = 0,
     ):
         """Initialize VoxCPM TTS pipeline.
 
@@ -69,6 +71,8 @@ class VoxCPM:
                 provided without lora_config, a default config will be created.
             lora_weights_path: Path to pre-trained LoRA weights (.pth file or directory
                 containing lora_weights.ckpt). If provided, LoRA weights will be loaded.
+            prompt_cache_size: Maximum reusable VoxCPM2 prompt feature entries on CPU
+                (16 MiB total limit). Zero disables reuse. Denoised samples bypass it.
         """
         print(
             f"voxcpm_model_path: {voxcpm_model_path}, zipenhancer_model_path: {zipenhancer_model_path}, enable_denoiser: {enable_denoiser}",
@@ -119,6 +123,7 @@ class VoxCPM:
             print(f"Loaded {len(loaded_keys)} LoRA parameters, skipped {len(skipped_keys)}", file=sys.stderr)
 
         self.text_normalizer = None
+        self.prompt_feature_cache = PromptFeatureCache(max_entries=prompt_cache_size)
         self.denoiser = None
         if enable_denoiser and zipenhancer_model_path is not None:
             from .zipenhancer import ZipEnhancer
@@ -270,6 +275,11 @@ class VoxCPM:
         text = text.replace("\n", " ")
         text = re.sub(r"\s+", " ", text)
         temp_files = []
+        cache_key = None
+        fixed_prompt_cache = None
+        if is_v2 and not denoise and (prompt_wav_path is not None or reference_wav_path is not None):
+            cache_key = self.prompt_feature_cache.key(prompt_text, prompt_wav_path, reference_wav_path)
+            fixed_prompt_cache = self.prompt_feature_cache.get(cache_key)
 
         try:
             actual_prompt_path = prompt_wav_path
@@ -287,7 +297,7 @@ class VoxCPM:
                     self.denoiser.enhance(reference_wav_path, output_path=temp_files[-1])
                     actual_ref_path = temp_files[-1]
 
-            if actual_prompt_path is not None or actual_ref_path is not None:
+            if fixed_prompt_cache is None and (actual_prompt_path is not None or actual_ref_path is not None):
                 if is_v2:
                     fixed_prompt_cache = self.tts_model.build_prompt_cache(
                         prompt_text=prompt_text,
@@ -299,8 +309,7 @@ class VoxCPM:
                         prompt_text=prompt_text,
                         prompt_wav_path=actual_prompt_path,
                     )
-            else:
-                fixed_prompt_cache = None
+                self.prompt_feature_cache.put(cache_key, fixed_prompt_cache)
 
             if normalize:
                 if self.text_normalizer is None:

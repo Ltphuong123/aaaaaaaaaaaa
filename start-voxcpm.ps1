@@ -37,6 +37,14 @@ $env:TORCH_COMPILE_DISABLE = '1'
 $env:VOXCPM_GPU_MEMORY_FRACTION = '0.85'
 $env:VOXCPM_RELEASE_CUDA_CACHE = '1'
 $env:VOXCPM_ASR_DEVICE = 'cpu'
+# Reuse reference features on CPU; retain full cloning and all inference steps.
+$env:VOXCPM_PROMPT_CACHE_SIZE = '16'
+$env:VOXCPM_CUDA_ESTIMATOR_GRAPH = '1'
+$env:VOXCPM_CUDA_TOKEN_GRAPHS = '1'
+$env:VOXCPM_CUDA_CFM_GRAPH = '1'
+$env:VOXCPM_ASYNC_INFERENCE = '1'
+# Return denoiser weights to RAM so later long reads retain enough GPU memory.
+$env:VOXCPM_OFFLOAD_DENOISER = '1'
 
 $server = Start-Process -FilePath $pythonExe -ArgumentList @(
     '-u', 'app.py', '--host', '127.0.0.1', '--port', "$Port",

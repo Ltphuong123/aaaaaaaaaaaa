@@ -6,11 +6,16 @@ Related dependencies are imported only when denoising functionality is needed.
 """
 
 import os
+import logging
 import tempfile
+import threading
 from typing import Optional
+import torch
 import torchaudio
 from modelscope.pipelines import pipeline
 from modelscope.utils.constant import Tasks
+
+log = logging.getLogger(__name__)
 
 
 class ZipEnhancer:
@@ -24,6 +29,43 @@ class ZipEnhancer:
         """
         self.model_path = model_path
         self._pipeline = pipeline(Tasks.acoustic_noise_suppression, model=self.model_path)
+        self.offload_after_use = False
+        self._model_lock = threading.Lock()
+
+    def _run_pipeline(self, input_path: str, output_path: str):
+        model = self._pipeline.model
+        if not isinstance(model, torch.nn.Module):
+            model = getattr(model, "model", None)
+        offload = (
+            self.offload_after_use and isinstance(model, torch.nn.Module)
+            and torch.device(self._pipeline.device).type == "cuda"
+        )
+        if not offload:
+            return self._pipeline(input_path, output_path=output_path)
+        with self._model_lock:
+            try:
+                # ModelScope prepares the model only once. Restore explicitly
+                # on later calls without changing the pipeline input device.
+                model.to(self._pipeline.device)
+                return self._pipeline(input_path, output_path=output_path)
+            finally:
+                try:
+                    model.to("cpu")
+                    # Zipformer's positional encoding is an ordinary tensor,
+                    # so Module.to() does not move it. Keep its computed bits;
+                    # extend_pe() will copy it back on the next enhancement.
+                    for module in model.modules():
+                        positions = getattr(module, "pe", None)
+                        if isinstance(positions, torch.Tensor) and positions.is_cuda:
+                            module.pe = positions.cpu()
+                except Exception:
+                    log.exception("Could not offload denoiser after enhancement")
+                finally:
+                    # Cleanup must not replace an enhancement's original error.
+                    try:
+                        torch.cuda.empty_cache()
+                    except Exception:
+                        log.exception("Could not release denoiser CUDA cache")
 
     def _normalize_loudness(self, wav_path: str):
         """
@@ -57,7 +99,7 @@ class ZipEnhancer:
                 output_path = tmp_file.name
         try:
             # Perform denoising processing
-            self._pipeline(input_path, output_path=output_path)
+            self._run_pipeline(input_path, output_path)
             # Loudness normalization
             if normalize_loudness:
                 self._normalize_loudness(output_path)

@@ -1,0 +1,12 @@
+{
+  "id": "c42c65794e414e60ae8d96cca1b2881c",
+  "name": "Nữ tươi sáng",
+  "description": "Giọng nữ trẻ, tươi sáng, vui vẻ và thân thiện, nói tiếng Việt rõ ràng, nhịp đọc tự nhiên.",
+  "transcript": "Xin chào, rất vui được gặp bạn. Mỗi ngày là một cơ hội để bắt đầu một câu chuyện mới. Hãy cùng tôi chậm lại một chút, lắng nghe và tận hưởng những điều giản dị quanh mình.",
+  "seed": 518,
+  "origin": "preset",
+  "duration": 11.04,
+  "sample_rate": 48000,
+  "created_at": "2026-10-19T16:14:41.454273+00:00",
+  "audio_url": "/api/voices/c42c65794e414e60ae8d96cca1b2881c/audio"
+}

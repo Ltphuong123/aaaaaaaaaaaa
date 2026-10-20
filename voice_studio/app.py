@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
 import os
 import re
@@ -22,6 +23,8 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from gradio_client import Client, handle_file
 from pydantic import BaseModel, Field
+
+from voice_studio.read_cache import ReadCache, engine_fingerprint
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA = Path(os.environ.get("VOICE_STUDIO_DATA", ROOT / "data" / "voice_studio"))
@@ -76,6 +79,22 @@ class VoiceStore:
         self.get_voice(voice_id)
         return self.voices / voice_id / "reference.wav"
 
+    def delete_voice(self, voice_id: str):
+        voice_id = self.valid_id(voice_id)
+        directory = self.voices / voice_id
+        resolved = directory.resolve()
+        # Only remove this UUID directory, never a junction/symlink target or
+        # a path outside the voice library. Renders/references stay independent.
+        if resolved.parent != self.voices.resolve() or resolved.name != voice_id or resolved != directory.absolute():
+            raise HTTPException(403, "Không thể xóa thư mục giọng này.")
+        voice = self.get_voice(voice_id)
+        if voice.get("origin") != "created":
+            raise HTTPException(403, "Chỉ có thể xóa giọng do bạn tạo. Giọng có sẵn được giữ trong thư viện.")
+        try:
+            shutil.rmtree(resolved)
+        except OSError as error:
+            raise HTTPException(409, "Chưa xóa được giọng. Hãy dừng phát giọng mẫu rồi thử lại.") from error
+
     def get_render(self, render_id: str) -> dict:
         path = self.renders / f"{self.valid_id(render_id)}.json"
         if not path.is_file():
@@ -118,16 +137,34 @@ class VoiceStore:
         self.write_json(directory / "voice.json", voice)
         return voice
 
-    def history(self) -> list[dict]:
+    def history(self, limit: int | None = 20) -> list[dict]:
         rows = []
         for path in self.renders.glob("*.json"):
             try:
                 item = json.loads(path.read_text(encoding="utf-8"))
-                if item["kind"] == "speak":
+                if (isinstance(item, dict) and item.get("kind") == "speak"
+                        and re.fullmatch(r"[a-f0-9]{32}", path.stem) and item.get("id") == path.stem):
                     rows.append(item)
             except (OSError, ValueError):
                 continue
-        return sorted(rows, key=lambda r: r["created_at"], reverse=True)[:20]
+        return sorted(rows, key=lambda r: r.get("created_at", ""), reverse=True)[:limit]
+
+    def delete_reading(self, render_id: str):
+        render_id = self.valid_id(render_id)
+        # Validate every exact file before removing anything. Never follow links
+        # or remove the separate design renders, reference uploads or voice library.
+        paths = [self.renders / f"{render_id}{suffix}" for suffix in (".wav", ".sample.wav", ".json")]
+        for path in paths:
+            if path.resolve().parent != self.renders.resolve() or path.resolve() != path.absolute():
+                raise HTTPException(403, "Không thể xóa file bản đọc này.")
+        if self.get_render(render_id).get("kind") != "speak":
+            raise HTTPException(403, "Chỉ có thể xóa bản đọc văn bản trong lịch sử.")
+        try:
+            # Metadata goes last so an interrupted deletion can be retried.
+            for path in paths:
+                path.unlink(missing_ok=True)
+        except OSError as error:
+            raise HTTPException(409, "Chưa xóa được bản đọc. Hãy dừng phát hoặc tải file WAV rồi thử lại.") from error
 
 
 def split_text(text: str, limit: int = 240) -> list[str]:
@@ -185,6 +222,48 @@ class SaveRequest(BaseModel):
 
 
 store = VoiceStore(DATA)
+read_cache = ReadCache(max_entries=32)
+
+
+class BackendSession:
+    """Reuse a Gradio connection from the single serialized TTS worker."""
+
+    def __init__(self):
+        self.client = None
+        self.key = None
+
+    def close(self):
+        with job_lock:
+            read_cache.clear()
+        client, self.client, self.key = self.client, None, None
+        if client is not None:
+            try:
+                client.close()
+            except Exception:
+                log.debug("Could not close the previous backend session", exc_info=True)
+            try:
+                client.executor.shutdown(wait=False, cancel_futures=True)
+            except Exception:
+                log.debug("Could not stop the previous backend executor", exc_info=True)
+
+    def predict(self, **kwargs):
+        # Include the factory so patched clients and alternate data stores stay
+        # isolated in tests. A new server connection fetches its own API schema.
+        key = (BACKEND, store.renders.resolve(), Client)
+        if self.client is None or self.key != key:
+            self.close()
+            self.client = Client(BACKEND, verbose=False, download_files=store.renders / "downloads", analytics_enabled=False)
+            self.key = key
+        try:
+            return self.client.predict(**kwargs)
+        except Exception:
+            # A restarted backend may invalidate its event stream. Reconnect
+            # for the next submission; never automatically synthesize twice.
+            self.close()
+            raise
+
+
+backend_session = BackendSession()
 jobs: dict[str, dict] = {}
 job_lock = threading.Lock()
 save_lock = threading.Lock()
@@ -194,16 +273,61 @@ asr_model = None
 app = FastAPI(title="Giọng Nhà", docs_url=None, redoc_url=None)
 
 
+@app.middleware("http")
+async def refresh_ui_assets(request, call_next):
+    response = await call_next(request)
+    if request.url.path in {"/", "/index.html", "/app.js", "/styles.css"}:
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 def update_job(job_id: str, **changes):
     with job_lock:
         jobs[job_id].update(changes)
+
+
+def reading_cache_key(request: GenerateRequest, reference_path: Path | None, prompt_text: str, settings: dict):
+    if request.kind != "speak" or request.random_seed or request.denoise or reference_path is None:
+        return None
+    engine = engine_fingerprint(ROOT, BACKEND)
+    if engine is None:
+        return None
+    with reference_path.open("rb") as reference:
+        reference_hash = hashlib.file_digest(reference, "sha256").hexdigest()
+    values = request.model_dump()
+    values["text"] = request.text.strip()
+    return (str(store.root), BACKEND, engine, reference_hash, prompt_text,
+            json.dumps(values, sort_keys=True, ensure_ascii=False), json.dumps(settings, sort_keys=True))
+
+
+def reuse_read(job_id: str, request: GenerateRequest, voice: dict, cache_key, started: float):
+    if cache_key is None:
+        return False
+    # History deletion uses the same lock, so an indexed source cannot disappear
+    # between verification and copying. No audio lives outside normal history.
+    with job_lock:
+        previous = read_cache.get(cache_key, store.renders)
+        if previous is None:
+            return False
+        for suffix in (".wav", ".sample.wav"):
+            shutil.copyfile(store.renders / f"{previous['id']}{suffix}", store.renders / f"{job_id}{suffix}")
+        elapsed = time.perf_counter() - started
+        render = {**previous, "id": job_id, "voice_id": voice["id"], "voice_name": voice["name"],
+                  "text": request.text.strip(), "description": request.description.strip(),
+                  "created_at": now(), "audio_url": f"/api/renders/{job_id}/audio",
+                  "download_url": f"/api/renders/{job_id}/download", "cache_hit": True,
+                  "processing_seconds": round(elapsed, 2),
+                  "real_time_factor": round(elapsed / max(previous["duration"], .01), 2)}
+        store.write_json(store.renders / f"{job_id}.json", render)
+        read_cache.put(cache_key, job_id, store.renders)
+        jobs[job_id].update(status="completed", message="Đã dùng lại bản đọc đã tạo.", result=render)
+        return True
 
 
 def generate(job_id: str, request: GenerateRequest):
     started = time.perf_counter()
     try:
         update_job(job_id, status="running", message="Đang kết nối mô hình…")
-        client = Client(BACKEND, verbose=False, download_files=store.renders / "downloads", analytics_enabled=False)
         voice = store.get_voice(request.voice_id) if request.kind == "speak" else None
         reference_path = store.audio_path(voice["id"]) if voice else (
             store.reference_path(request.reference_id) if request.reference_id else None
@@ -214,11 +338,14 @@ def generate(job_id: str, request: GenerateRequest):
         }
         use_prompt = settings["use_prompt_text"]
         requested_seed = secrets.randbits(32) if request.random_seed else request.seed
+        cache_key = reading_cache_key(request, reference_path, prompt_text, settings)
+        if voice and reuse_read(job_id, request, voice, cache_key, started):
+            return
         parts = split_text(request.text)
         waves, sample_rate, actual_seeds = [], None, []
         for index, part in enumerate(parts):
             update_job(job_id, message=f"Đang đọc đoạn {index + 1}/{len(parts)}…", current=index + 1, total=len(parts))
-            result = client.predict(
+            result = backend_session.predict(
                 text=part,
                 control_instruction=request.description if not use_prompt else "",
                 ref_wav=handle_file(str(reference_path)) if reference_path else None,
@@ -262,14 +389,17 @@ def generate(job_id: str, request: GenerateRequest):
                 "mode": "ultimate" if settings["use_prompt_text"] else "clone" if voice or request.reference_id else "design",
                 "read_mode": request.read_mode if voice else None,
             },
-            "duration": round(len(audio) / sample_rate, 2), "sample_rate": sample_rate,
+            "duration": round(len(audio) / sample_rate, 2), "sample_rate": sample_rate, "cache_hit": False,
             "processing_seconds": round(time.perf_counter() - started, 2),
             "real_time_factor": round((time.perf_counter() - started) / (len(audio) / sample_rate), 2),
             "created_at": now(), "audio_url": f"/api/renders/{job_id}/audio",
             "download_url": f"/api/renders/{job_id}/download",
         }
-        store.write_json(store.renders / f"{job_id}.json", render)
-        update_job(job_id, status="completed", message="Âm thanh đã sẵn sàng.", result=render)
+        with job_lock:
+            store.write_json(store.renders / f"{job_id}.json", render)
+            if cache_key is not None:
+                read_cache.put(cache_key, job_id, store.renders)
+            jobs[job_id].update(status="completed", message="Âm thanh đã sẵn sàng.", result=render)
     except Exception as error:
         log.exception("Voice generation failed: %s", job_id)
         message = str(error)
@@ -299,6 +429,37 @@ def history():
     return store.history()
 
 
+@app.delete("/api/history")
+def clear_history():
+    deleted, failed = [], []
+    with job_lock:
+        if any(job["status"] in ("queued", "running") and job.get("kind") == "speak" for job in jobs.values()):
+            raise HTTPException(409, "Đang tạo bản đọc mới. Hãy đợi đọc xong rồi xóa toàn bộ lịch sử.")
+        # The list shown on screen is limited; clearing includes older readings.
+        for render in store.history(limit=None):
+            render_id = render["id"]
+            try:
+                store.delete_reading(render_id)
+            except HTTPException as error:
+                failed.append({"id": render_id, "message": error.detail})
+                continue
+            jobs.pop(render_id, None)
+            deleted.append(render_id)
+    return {"deleted": deleted, "count": len(deleted), "failed": failed}
+
+
+@app.delete("/api/history/{render_id}")
+def delete_reading(render_id: str):
+    store.valid_id(render_id)
+    with job_lock:
+        if jobs.get(render_id, {}).get("status") in ("queued", "running"):
+            raise HTTPException(409, "Bản đọc này đang được tạo. Hãy đợi đọc xong rồi xóa.")
+        store.delete_reading(render_id)
+        # A completed in-memory job must not restore deleted history after reload.
+        jobs.pop(render_id, None)
+    return {"deleted": [render_id], "count": 1, "failed": []}
+
+
 @app.post("/api/jobs", status_code=202)
 def create_job(request: GenerateRequest):
     request.text = request.text.strip()
@@ -315,14 +476,14 @@ def create_job(request: GenerateRequest):
             raise HTTPException(400, "Hãy nhập hoặc nhận dạng lời của âm thanh mẫu trước khi tạo giọng.")
     elif not request.voice_id:
         raise HTTPException(400, "Hãy chọn một giọng trong thư viện.")
-    else:
-        store.get_voice(request.voice_id)
     with job_lock:
+        if request.kind == "speak":
+            store.get_voice(request.voice_id)
         pending = sum(j["status"] in ("queued", "running") for j in jobs.values())
         if pending >= 5:
             raise HTTPException(429, "Đã có nhiều yêu cầu đang chờ. Hãy đợi một chút.")
         job_id = uuid.uuid4().hex
-        job = {"id": job_id, "status": "queued", "message": "Đang chờ đến lượt…", "current": 0, "total": 0, "created_at": now()}
+        job = {"id": job_id, "kind": request.kind, "status": "queued", "message": "Đang chờ đến lượt…", "current": 0, "total": 0, "created_at": now(), "voice_id": request.voice_id if request.kind == "speak" else None}
         jobs[job_id] = job
     executor.submit(generate, job_id, request)
     return dict(job)
@@ -454,6 +615,16 @@ def save_voice(request: SaveRequest):
 @app.get("/api/voices/{voice_id}/audio")
 def voice_audio(voice_id: str):
     return FileResponse(store.audio_path(voice_id), media_type="audio/wav")
+
+
+@app.delete("/api/voices/{voice_id}")
+def delete_voice(voice_id: str):
+    with save_lock, job_lock:
+        store.valid_id(voice_id)
+        if any(job["status"] in ("queued", "running") and job.get("voice_id") == voice_id for job in jobs.values()):
+            raise HTTPException(409, "Giọng này đang được dùng để đọc văn bản. Hãy đợi đọc xong rồi xóa.")
+        store.delete_voice(voice_id)
+    return {"deleted": voice_id}
 
 
 @app.get("/api/renders/{render_id}/audio")

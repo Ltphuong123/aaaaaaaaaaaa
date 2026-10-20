@@ -45,6 +45,7 @@ from ..modules.layers.lora import apply_lora_to_named_linear_modules
 from ..modules.locdit import CfmConfig, UnifiedCFM, VoxCPMLocDiTV2
 from ..modules.locenc import VoxCPMLocEnc
 from ..modules.minicpm4 import MiniCPM4Config, MiniCPMModel
+from ..utils.async_inference import create_async_inference_state
 from .utils import (
     apply_generation_seed,
     get_dtype,
@@ -169,6 +170,7 @@ class VoxCPM2Model(nn.Module):
         self.feat_dim = config.feat_dim
         self.patch_size = config.patch_size
         self.device = resolve_runtime_device(device, config.device)
+        self.async_inference = False
         self.config.device = self.device
         resolved_dtype = pick_runtime_dtype(self.device, self.config.dtype)
         if resolved_dtype != self.config.dtype:
@@ -1080,7 +1082,15 @@ class VoxCPM2Model(nn.Module):
         self.residual_lm.kv_cache.fill_caches(residual_kv_cache_tuple)
         residual_hidden = residual_enc_outputs[:, -1, :]
 
+        async_state = create_async_inference_state(
+            enabled=getattr(self, "async_inference", False), streaming=streaming, device=lm_hidden.device,
+        )
         for i in tqdm(range(max_len)):
+            if async_state is not None:
+                # Stop depends on the current LM state, so its transfer can
+                # finish while the independent current-patch work is queued.
+                stop_value = self.stop_head(self.stop_actn(self.stop_proj(lm_hidden))).argmax(dim=-1)[0]
+                async_state.queue_stop(stop_value)
             dit_hidden_1 = self.lm_to_dit_proj(lm_hidden)  # [b, h_dit]
             dit_hidden_2 = self.res_to_dit_proj(residual_hidden)  # [b, h_dit]
             dit_hidden = torch.cat((dit_hidden_1, dit_hidden_2), dim=-1)
@@ -1110,18 +1120,29 @@ class VoxCPM2Model(nn.Module):
                 if len(pred_feat_seq) > streaming_prefix_len:
                     pred_feat_seq = pred_feat_seq[-streaming_prefix_len:]
 
-            stop_flag = self.stop_head(self.stop_actn(self.stop_proj(lm_hidden))).argmax(dim=-1)[0].cpu().item()
+            if async_state is not None:
+                stop_flag = async_state.wait_stop()
+            else:
+                stop_flag = self.stop_head(self.stop_actn(self.stop_proj(lm_hidden))).argmax(dim=-1)[0].cpu().item()
             if i > min_len and stop_flag == 1:
                 break
 
+            base_position = (
+                async_state.base_step(self.base_lm.kv_cache.step()) if async_state is not None
+                else torch.tensor([self.base_lm.kv_cache.step()], device=curr_embed.device)
+            )
             lm_hidden = self.base_lm.forward_step(
-                curr_embed[:, 0, :], torch.tensor([self.base_lm.kv_cache.step()], device=curr_embed.device)
+                curr_embed[:, 0, :], base_position
             ).clone()
 
             lm_hidden = self.fsq_layer(lm_hidden)
             curr_residual_input = self.fusion_concat_proj(torch.cat((lm_hidden, curr_embed[:, 0, :]), dim=-1))
+            residual_position = (
+                async_state.residual_step(self.residual_lm.kv_cache.step()) if async_state is not None
+                else torch.tensor([self.residual_lm.kv_cache.step()], device=curr_embed.device)
+            )
             residual_hidden = self.residual_lm.forward_step(
-                curr_residual_input, torch.tensor([self.residual_lm.kv_cache.step()], device=curr_embed.device)
+                curr_residual_input, residual_position
             ).clone()
 
         if not streaming:

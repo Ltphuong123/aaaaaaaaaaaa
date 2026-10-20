@@ -6,8 +6,8 @@
   <meta name="theme-color" content="#204b3e">
   <title>Giọng Nhà — Giọng của bạn, câu chuyện của bạn</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/styles.css">
-  <script src="/app.js" defer></script>
+  <link rel="stylesheet" href="/styles.css?v=speed-5">
+  <script src="/app.js?v=speed-5" defer></script>
 </head>
 <body>
   <svg class="svg-defs" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -20,6 +20,7 @@
     <symbol id="icon-spark" viewBox="0 0 24 24"><path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5Z"/></symbol>
     <symbol id="icon-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
     <symbol id="icon-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="icon-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 10v7m4-7v7"/></symbol>
   </svg>
   <aside class="sidebar">
     <a class="brand" href="#read" aria-label="Giọng Nhà, trang chính"><span class="brand-mark"><svg><use href="#icon-wave"/></svg></span><span>Giọng Nhà<span class="brand-caption">MỖI GIỌNG MỘT CÂU CHUYỆN</span></span></a>
@@ -53,7 +54,7 @@
       </div>
       <section id="read-progress" class="progress-panel" hidden aria-live="polite"><span class="spinner"></span><div><strong id="read-progress-text">Đang chuẩn bị giọng đọc…</strong><p>Lần đầu có thể lâu hơn vì cần nạp mô hình. Bạn có thể chuyển sang mục khác trong khi chờ.</p></div></section>
       <section id="read-result" class="panel result-panel" hidden><div class="result-title"><span class="result-icon"><svg><use href="#icon-check"/></svg></span><div><h2>Bản đọc của bạn đã sẵn sàng</h2><p id="result-detail"></p></div><a id="read-download" class="button button-light" download><svg><use href="#icon-download"/></svg>Tải WAV</a></div><audio id="read-audio" controls preload="metadata"></audio></section>
-      <section class="recent-section"><div class="section-heading"><h2><svg><use href="#icon-clock"/></svg>Những bản đọc gần đây</h2><span>Lưu ngay trên máy</span></div><div id="history-list"></div></section>
+      <section class="recent-section"><div class="section-heading history-heading"><h2><svg><use href="#icon-clock"/></svg>Những bản đọc gần đây</h2><button id="clear-history" class="history-delete" type="button" disabled><svg><use href="#icon-trash"/></svg>Xóa toàn bộ</button></div><div id="history-list"></div></section>
     </section>
 
     <section id="page-library" class="page" aria-labelledby="library-title">
@@ -92,6 +93,8 @@
     <footer class="page-footer"><span>GIỌNG NHÀ</span><span>Giữ lại một giọng. Kể thêm nhiều điều.</span><span>Âm thanh tạo bằng AI</span></footer>
   </main>
   <div id="toast" class="toast" role="status" hidden></div>
-  <template id="voice-card-template"><article class="voice-card"><div class="voice-card-top"><div class="voice-avatar"><svg><use href="#icon-wave"/></svg></div><span class="voice-badge"></span></div><h2 class="voice-name"></h2><p class="voice-description"></p><audio controls preload="metadata" aria-label="Nghe giọng mẫu"></audio><div class="voice-card-footer"><span class="voice-duration"></span><button class="button button-light choose-voice">Dùng giọng này <svg><use href="#icon-arrow"/></svg></button></div></article></template>
+  <dialog id="delete-voice-dialog" class="confirm-dialog" aria-labelledby="delete-dialog-title" aria-describedby="delete-dialog-description"><h2 id="delete-dialog-title">Xóa giọng đã tạo?</h2><p id="delete-dialog-description">Bạn muốn xóa <strong id="delete-voice-name"></strong> khỏi thư viện?</p><p class="dialog-note">Các bản đọc đã tạo bằng giọng này vẫn được giữ lại.</p><p id="delete-voice-error" class="dialog-error" role="alert" hidden></p><div class="dialog-actions"><button id="cancel-delete-voice" class="button button-light" type="button" autofocus>Giữ lại</button><button id="confirm-delete-voice" class="button button-danger" type="button">Xóa giọng</button></div></dialog>
+  <dialog id="delete-history-dialog" class="confirm-dialog" aria-labelledby="delete-history-title" aria-describedby="delete-history-description"><h2 id="delete-history-title">Xóa bản đọc?</h2><p id="delete-history-description"></p><p class="dialog-note">Nội dung lịch sử và file WAV tương ứng sẽ bị xóa khỏi tool. Các giọng đã lưu vẫn được giữ nguyên. Thao tác này không thể hoàn tác.</p><p id="delete-history-error" class="dialog-error" role="alert" hidden></p><div class="dialog-actions"><button id="cancel-delete-history" class="button button-light" type="button" autofocus>Giữ lại</button><button id="confirm-delete-history" class="button button-danger" type="button">Xóa bản đọc</button></div></dialog>
+  <template id="voice-card-template"><article class="voice-card"><div class="voice-card-top"><div class="voice-avatar"><svg><use href="#icon-wave"/></svg></div><div class="voice-card-tools"><span class="voice-badge"></span><button class="delete-voice" type="button" hidden><svg><use href="#icon-trash"/></svg><span>Xóa giọng</span></button></div></div><h2 class="voice-name"></h2><p class="voice-description"></p><audio controls preload="metadata" aria-label="Nghe giọng mẫu"></audio><div class="voice-card-footer"><span class="voice-duration"></span><button class="button button-light choose-voice">Dùng giọng này <svg><use href="#icon-arrow"/></svg></button></div></article></template>
 </body>
 </html>

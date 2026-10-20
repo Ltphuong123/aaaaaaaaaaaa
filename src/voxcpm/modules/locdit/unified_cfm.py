@@ -43,6 +43,7 @@ class UnifiedCFM(torch.nn.Module):
         self.mean_mode = mean_mode
 
         self.estimator = estimator
+        self.inference_time_grid_cache = None
 
     # ------------------------------------------------------------------ #
     # Inference
@@ -63,8 +64,16 @@ class UnifiedCFM(torch.nn.Module):
         t = patch_size
         z = torch.randn((b, self.in_channels, t), device=mu.device, dtype=mu.dtype) * temperature
 
-        t_span = torch.linspace(1, 0, n_timesteps + 1, device=mu.device, dtype=mu.dtype)
-        t_span = t_span + sway_sampling_coef * (torch.cos(torch.pi / 2 * t_span) - 1 + t_span)
+        grid_cache = self.inference_time_grid_cache
+        grid_key = (n_timesteps, sway_sampling_coef, mu.device, mu.dtype)
+        t_span = grid_cache.get(grid_key) if grid_cache is not None else None
+        if t_span is None:
+            t_span = torch.linspace(1, 0, n_timesteps + 1, device=mu.device, dtype=mu.dtype)
+            t_span = t_span + sway_sampling_coef * (torch.cos(torch.pi / 2 * t_span) - 1 + t_span)
+            if grid_cache is not None:
+                if len(grid_cache) >= 8:
+                    grid_cache.pop(next(iter(grid_cache)))
+                grid_cache[grid_key] = t_span
 
         return self.solve_euler(
             x=z,

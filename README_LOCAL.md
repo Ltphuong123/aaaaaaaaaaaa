@@ -29,6 +29,14 @@ Script cũng chừa 15% VRAM cho Windows, giải phóng bộ nhớ CUDA tạm gi
 và chạy ASR gốc trên CPU để hạn chế chậm do GPU phải dùng RAM chia sẻ.
 Phần đọc văn bản có ba mức **Nhanh / Cân bằng / Ưu tiên giống mẫu**;
 xem số đo và cách chọn trong `voice_studio/README.md`.
+Script đã bật tái sử dụng đặc trưng giọng mẫu trên CPU và CUDA Graph cho bộ ước lượng
+LocDiT, giúp chế độ ưu tiên giống mẫu chạy nhanh hơn ở nguyên 10 bước/CFG/seed.
+Các WAV thử được kiểm tra trùng từng byte với bản trước tối ưu; xem số đo trong tài liệu tool.
+CUDA Graph cũng được mở rộng sang các khối Base LM, Residual LM và mã hóa một patch,
+giảm thêm thời gian gửi lệnh GPU ở nguyên tham số và âm thanh đầu ra trong các mẫu thử.
+Đã bổ sung graph cho toàn bộ bộ giải CFM, dùng lại vector thời gian và bộ đệm vị trí,
+chuyển cờ dừng bất đồng bộ. Ba chế độ vẫn dùng nguyên 4/6/10 bước; tool dùng lại
+kết nối mô hình và kiểm tra hoàn tất mỗi 250 ms. Chi tiết và số đo trong tài liệu tool.
 
 Đã kiểm tra: 143 gói tương thích bằng `uv pip check`, phép tính BF16 trên RTX 5050,
 đọc WAV qua TorchCodec/FFmpeg, giao diện HTTP 200, script tắt/khởi động lại,

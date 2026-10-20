@@ -1,0 +1,12 @@
+{
+  "id": "812f7df342884d9e86159b37b80ca0e1",
+  "name": "Nam trầm ấm",
+  "description": "Giọng nam trưởng thành, trầm ấm, điềm tĩnh, nói tiếng Việt rõ ràng, phong cách kể chuyện.",
+  "transcript": "Xin chào, rất vui được gặp bạn. Mỗi ngày là một cơ hội để bắt đầu một câu chuyện mới. Hãy cùng tôi chậm lại một chút, lắng nghe và tận hưởng những điều giản dị quanh mình.",
+  "seed": 267,
+  "origin": "preset",
+  "duration": 11.84,
+  "sample_rate": 48000,
+  "created_at": "2026-10-19T16:14:00.184215+00:00",
+  "audio_url": "/api/voices/812f7df342884d9e86159b37b80ca0e1/audio"
+}

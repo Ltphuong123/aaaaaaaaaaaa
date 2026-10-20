@@ -2,6 +2,8 @@
 const $ = (selector) => document.querySelector(selector);
 let voices = [], selectedId = localStorage.getItem("giong-nha-voice"), filter = "all", designRender = null;
 let toastTimer;
+let pendingDeleteId = null, deletingVoice = false;
+let pendingHistoryDelete = null, deletingHistory = false, historyLoadVersion = 0;
 const activeJobs = {read: false, design: false};
 const readModeHints = {
   fast: "Tạo nhanh hơn với 4 bước xử lý. Âm sắc và ngữ điệu có thể khác mẫu nhiều hơn.",
@@ -68,6 +70,9 @@ function renderSelected() {
     p.textContent = "Chưa có giọng nào. Hãy tạo và lưu giọng đầu tiên trong mục Tạo giọng mới.";
     target.append(p);
     $("#voice-preview").hidden = true;
+    $("#voice-preview").pause();
+    $("#voice-preview").removeAttribute("src");
+    $("#voice-preview").load();
     return;
   }
   const avatar = document.createElement("div");
@@ -114,6 +119,11 @@ function renderLibrary() {
     card.querySelector("audio").src = voice.audio_url;
     card.querySelector("audio").setAttribute("aria-label", `Nghe thử giọng ${voice.name}`);
     card.querySelector(".voice-duration").textContent = `Mẫu ${duration(voice.duration)}`;
+    const remove = card.querySelector(".delete-voice");
+    remove.hidden = voice.origin !== "created";
+    remove.setAttribute("aria-label", `Xóa giọng ${voice.name}`);
+    remove.title = `Xóa giọng ${voice.name}`;
+    remove.addEventListener("click", () => openDeleteVoice(voice));
     const button = card.querySelector(".choose-voice");
     if (voice.id === selectedId) button.innerHTML = 'Đang dùng <svg><use href="#icon-check"/></svg>';
     button.setAttribute("aria-label", `Dùng giọng ${voice.name}`);
@@ -126,32 +136,170 @@ async function loadVoices() {
   voices = await api("/api/voices");
   if (!voices.some(v => v.id === selectedId)) selectedId = voices[0]?.id || null;
   if (selectedId) localStorage.setItem("giong-nha-voice", selectedId);
+  else localStorage.removeItem("giong-nha-voice");
   $("#voice-count").textContent = voices.length;
   renderSelected();
   renderLibrary();
 }
 
+function openDeleteVoice(voice) {
+  if (deletingVoice || voice.origin !== "created") return;
+  pendingDeleteId = voice.id;
+  $("#delete-voice-name").textContent = voice.name;
+  $("#delete-voice-error").hidden = true;
+  $("#delete-voice-dialog").showModal();
+}
+
+$("#cancel-delete-voice").addEventListener("click", () => {
+  if (!deletingVoice) $("#delete-voice-dialog").close();
+});
+$("#delete-voice-dialog").addEventListener("cancel", event => {
+  if (deletingVoice) event.preventDefault();
+});
+$("#delete-voice-dialog").addEventListener("close", () => { pendingDeleteId = null; });
+$("#confirm-delete-voice").addEventListener("click", async () => {
+  if (!pendingDeleteId || deletingVoice) return;
+  const id = pendingDeleteId, voice = voices.find(item => item.id === id);
+  deletingVoice = true;
+  $("#confirm-delete-voice").disabled = $("#cancel-delete-voice").disabled = true;
+  $("#confirm-delete-voice").textContent = "Đang xóa…";
+  $("#delete-voice-error").hidden = true;
+  try {
+    document.querySelectorAll("audio").forEach(audio => {
+      if (audio.getAttribute("src") === voice?.audio_url) {
+        audio.pause(); audio.removeAttribute("src"); audio.load();
+      }
+    });
+    await api(`/api/voices/${id}`, {method: "DELETE"});
+    voices = voices.filter(item => item.id !== id);
+    if (selectedId === id) selectedId = voices[0]?.id || null;
+    if (selectedId) localStorage.setItem("giong-nha-voice", selectedId);
+    else localStorage.removeItem("giong-nha-voice");
+    $("#voice-count").textContent = voices.length;
+    renderSelected(); renderLibrary();
+    if ($("#saved-message").dataset.voiceId === id) {
+      $("#saved-message").hidden = true;
+      $("#save-button").disabled = !designRender;
+    }
+    $("#delete-voice-dialog").close();
+    ($("#voice-grid .choose-voice") || $("#voice-search")).focus();
+    toast(`Đã xóa giọng ${voice?.name || "khỏi thư viện"}.`);
+  } catch (error) {
+    $("#delete-voice-error").textContent = error.message;
+    $("#delete-voice-error").hidden = false;
+    // Restore previews if the server rejected deletion (for example, in-use voices).
+    renderSelected(); renderLibrary();
+  } finally {
+    deletingVoice = false;
+    $("#confirm-delete-voice").disabled = $("#cancel-delete-voice").disabled = false;
+    $("#confirm-delete-voice").textContent = "Xóa giọng";
+  }
+});
+
 async function loadHistory() {
+  const version = ++historyLoadVersion;
   const rows = await api("/api/history"), list = $("#history-list");
+  if (version !== historyLoadVersion) return;
+  $("#clear-history").disabled = !rows.length;
   list.replaceChildren();
   if (!rows.length) {
     const empty = document.createElement("div");
     empty.className = "empty-history";
-    empty.textContent = "Bản đọc đầu tiên của bạn sẽ xuất hiện ở đây.";
+    empty.textContent = "Chưa có lịch sử. Các bản đọc mới sẽ xuất hiện ở đây.";
     list.append(empty);
   }
   rows.slice(0, 8).forEach(row => {
-    const item = document.createElement("article"), copy = document.createElement("div"), text = document.createElement("p"), detail = document.createElement("small"), audio = document.createElement("audio"), link = document.createElement("a");
+    const item = document.createElement("article"), copy = document.createElement("div"), text = document.createElement("p"), detail = document.createElement("small"), audio = document.createElement("audio"), link = document.createElement("a"), actions = document.createElement("div"), remove = document.createElement("button");
     item.className = "history-row";
+    item.dataset.renderId = row.id;
     copy.className = "history-copy";
     text.textContent = row.text;
     detail.textContent = `${row.voice_name} · ${duration(row.duration)} · ${new Date(row.created_at).toLocaleDateString("vi-VN")}`;
     audio.controls = true; audio.preload = "metadata"; audio.src = row.audio_url;
     audio.setAttribute("aria-label", `Nghe bản đọc: ${row.text.slice(0, 60)}`);
     link.href = row.download_url; link.download = ""; link.textContent = "Tải WAV";
-    copy.append(text, detail); item.append(copy, audio, link); list.append(item);
+    actions.className = "history-actions";
+    remove.className = "history-delete"; remove.type = "button";
+    remove.innerHTML = '<svg><use href="#icon-trash"/></svg><span>Xóa</span>';
+    remove.setAttribute("aria-label", `Xóa bản đọc: ${row.text.slice(0, 60)}`);
+    remove.addEventListener("click", () => openDeleteHistory(row));
+    actions.append(link, remove);
+    copy.append(text, detail); item.append(copy, audio, actions); list.append(item);
   });
 }
+
+function openDeleteHistory(row = null) {
+  if (deletingHistory) return;
+  pendingHistoryDelete = row || {all: true};
+  $("#delete-history-title").textContent = row ? "Xóa bản đọc?" : "Xóa toàn bộ lịch sử?";
+  $("#delete-history-description").textContent = row
+    ? `Bạn muốn xóa bản đọc “${row.text.slice(0, 180)}${row.text.length > 180 ? "…" : ""}”?`
+    : "Tất cả bản đọc đã lưu sẽ bị xóa, bao gồm cả các bản cũ không hiển thị ở đây.";
+  $("#confirm-delete-history").textContent = row ? "Xóa bản đọc" : "Xóa toàn bộ";
+  $("#delete-history-error").hidden = true;
+  $("#delete-history-dialog").showModal();
+}
+
+function forgetReadings(ids) {
+  const deleted = new Set(ids);
+  if (deleted.has(localStorage.getItem("giong-nha-last-read"))) localStorage.removeItem("giong-nha-last-read");
+  if (deleted.has(localStorage.getItem("giong-nha-pending-read"))) localStorage.removeItem("giong-nha-pending-read");
+  if (deleted.has($("#read-result").dataset.renderId)) {
+    $("#read-result").hidden = true;
+    delete $("#read-result").dataset.renderId;
+    $("#read-audio").pause(); $("#read-audio").removeAttribute("src"); $("#read-audio").load();
+    $("#read-download").removeAttribute("href");
+    $("#result-detail").textContent = "";
+  }
+}
+
+$("#clear-history").addEventListener("click", () => openDeleteHistory());
+$("#cancel-delete-history").addEventListener("click", () => {
+  if (!deletingHistory) $("#delete-history-dialog").close();
+});
+$("#delete-history-dialog").addEventListener("cancel", event => {
+  if (deletingHistory) event.preventDefault();
+});
+$("#delete-history-dialog").addEventListener("close", () => { pendingHistoryDelete = null; });
+$("#confirm-delete-history").addEventListener("click", async () => {
+  if (!pendingHistoryDelete || deletingHistory) return;
+  const target = pendingHistoryDelete, stopped = [], deleted = new Set();
+  deletingHistory = true;
+  $("#confirm-delete-history").disabled = $("#cancel-delete-history").disabled = true;
+  $("#confirm-delete-history").textContent = "Đang xóa…";
+  $("#delete-history-error").hidden = true;
+  try {
+    // Release audio files before Windows removes them; preserve voice previews.
+    document.querySelectorAll("#history-list audio, #read-audio").forEach(audio => {
+      const src = audio.getAttribute("src");
+      if (src && (target.all || src === target.audio_url)) {
+        stopped.push({audio, src});
+        audio.pause(); audio.removeAttribute("src"); audio.load();
+      }
+    });
+    const result = await api(target.all ? "/api/history" : `/api/history/${target.id}`, {method: "DELETE"});
+    result.deleted.forEach(id => deleted.add(id));
+    forgetReadings(result.deleted);
+    await loadHistory();
+    if (result.failed.length) {
+      throw new Error(`Đã xóa ${result.count} bản đọc. Còn ${result.failed.length} bản chưa xóa được. ${result.failed[0].message}`);
+    }
+    $("#delete-history-dialog").close();
+    ($("#history-list .history-delete") || ($("#clear-history").disabled ? $("#read-text") : $("#clear-history"))).focus();
+    toast(target.all ? `Đã xóa ${result.count} bản đọc khỏi lịch sử.` : "Đã xóa bản đọc khỏi lịch sử.");
+  } catch (error) {
+    $("#delete-history-error").textContent = error.message;
+    $("#delete-history-error").hidden = false;
+  } finally {
+    stopped.forEach(({audio, src}) => {
+      const id = src.split("/")[3];
+      if (!deleted.has(id) && audio.isConnected) audio.src = src;
+    });
+    deletingHistory = false;
+    $("#confirm-delete-history").disabled = $("#cancel-delete-history").disabled = false;
+    $("#confirm-delete-history").textContent = target.all ? "Xóa toàn bộ" : "Xóa bản đọc";
+  }
+});
 
 function setBusy(type, value) {
   activeJobs[type] = value;
@@ -170,10 +318,12 @@ function setBusy(type, value) {
 function showResult(type, result, updateSeed = true) {
   if (type === "read") {
     $("#read-result").hidden = false;
+    $("#read-result").dataset.renderId = result.id;
     $("#read-audio").src = result.audio_url;
     $("#read-download").href = result.download_url;
     $("#result-detail").textContent = `${result.voice_name} · ${duration(result.duration)} · WAV ${result.sample_rate / 1000} kHz`;
-    if (result.processing_seconds != null) $("#result-detail").textContent += ` · Tạo trong ${result.processing_seconds.toLocaleString("vi-VN")} giây · ${readModeNames[result.generation?.read_mode] || ""}`;
+    if (result.cache_hit) $("#result-detail").textContent += ` · Dùng lại bản đọc đã tạo · ${readModeNames[result.generation?.read_mode] || ""}`;
+    else if (result.processing_seconds != null) $("#result-detail").textContent += ` · Tạo trong ${result.processing_seconds.toLocaleString("vi-VN")} giây · ${readModeNames[result.generation?.read_mode] || ""}`;
     localStorage.setItem("giong-nha-last-read", result.id);
     loadHistory().catch(error => toast(error.message, true));
   } else {
@@ -207,7 +357,8 @@ async function watchJob(type, id) {
         toast(type === "read" ? "Đã tạo xong bản đọc của bạn." : "Giọng thử đã sẵn sàng. Hãy nghe và lưu nếu bạn ưng ý.");
         break;
       }
-      await pause(1200);
+      // Polling changes when completed audio appears, not inference quality or speed.
+      await pause(250);
     }
   } catch (error) {
     toast(error.message, true);
@@ -273,6 +424,7 @@ $("#save-button").addEventListener("click", async () => {
     localStorage.setItem("giong-nha-voice", selectedId);
     await loadVoices();
     const message = $("#saved-message");
+    message.dataset.voiceId = voice.id;
     message.replaceChildren(document.createTextNode(`Đã lưu “${voice.name}”. `));
     const link = document.createElement("a"); link.href = "#read"; link.textContent = "Dùng giọng này để đọc văn bản →";
     message.append(link); message.hidden = false;

@@ -245,6 +245,7 @@ class VoxCPMDemo:
         self.asr_model: Optional[AutoModel] = None
 
         self.voxcpm_model: Optional[voxcpm.VoxCPM] = None
+        self._token_graphs = []
         self._model_id = model_id
 
     def get_or_load_voxcpm(self) -> voxcpm.VoxCPM:
@@ -255,7 +256,42 @@ class VoxCPMDemo:
             self._model_id,
             optimize=self.optimize,
             device=self.device,
+            prompt_cache_size=int(os.environ.get("VOXCPM_PROMPT_CACHE_SIZE", "0")),
         )
+        if self.device.startswith("cuda") and os.environ.get("VOXCPM_CUDA_ESTIMATOR_GRAPH") == "1":
+            from voxcpm.utils.cuda_graph import GraphedEstimator
+
+            estimator = self.voxcpm_model.tts_model.feat_decoder.estimator
+            estimator.forward = GraphedEstimator(estimator.forward)
+        if self.device.startswith("cuda") and os.environ.get("VOXCPM_CUDA_TOKEN_GRAPHS") == "1":
+            from voxcpm.utils.cuda_graph import GraphedEstimator
+
+            tts = self.voxcpm_model.tts_model
+            # KV buffers keep their addresses across fill_caches(); the Python
+            # position counters still advance in the original inference loop.
+            tts.base_lm.forward_step = GraphedEstimator(tts.base_lm.forward_step, name="Base LM")
+            tts.residual_lm.forward_step = GraphedEstimator(tts.residual_lm.forward_step, name="Residual LM")
+            tts.feat_encoder.forward = GraphedEstimator(
+                tts.feat_encoder.forward, name="Single-patch encoder",
+                capture_condition=lambda value: value.ndim == 4 and value.shape[1] == 1,
+            )
+            self._token_graphs = [tts.base_lm.forward_step, tts.residual_lm.forward_step, tts.feat_encoder.forward]
+        if self.device.startswith("cuda") and os.environ.get("VOXCPM_CUDA_CFM_GRAPH") == "1":
+            from voxcpm.utils.cfm_graph import GraphedCFMSolver
+            from voxcpm.utils.cuda_graph import GraphedEstimator
+
+            decoder = self.voxcpm_model.tts_model.feat_decoder
+            decoder.inference_time_grid_cache = {}
+            child = decoder.estimator.forward
+            child = child if isinstance(child, GraphedEstimator) else None
+            decoder.solve_euler = GraphedCFMSolver(decoder.solve_euler, estimator_graph=child)
+            self._token_graphs.append(decoder.solve_euler)
+            if child is not None:
+                self._token_graphs.append(child)
+        if self.device.startswith("cuda"):
+            self.voxcpm_model.tts_model.async_inference = os.environ.get("VOXCPM_ASYNC_INFERENCE") == "1"
+            if self.voxcpm_model.denoiser is not None:
+                self.voxcpm_model.denoiser.offload_after_use = os.environ.get("VOXCPM_OFFLOAD_DENOISER") == "1"
         if self.release_cuda_cache and self.device.startswith("cuda"):
             torch.cuda.empty_cache()
         logger.info("Model loaded successfully.")
@@ -358,9 +394,35 @@ class VoxCPMDemo:
         started = time.perf_counter()
         if self.release_cuda_cache and self.device.startswith("cuda"):
             torch.cuda.empty_cache()
+        paused_graphs = False
+        def pause_token_graphs():
+            nonlocal paused_graphs
+            paused_graphs = True
+            torch.cuda.synchronize(self.device)
+            for graph in self._token_graphs:
+                graph.pause()
+            torch.cuda.empty_cache()
+
         try:
-            wav = current_model.generate(**generate_kwargs)
+            if denoise and self._token_graphs:
+                pause_token_graphs()
+            retry_without_graphs = False
+            try:
+                wav = current_model.generate(**generate_kwargs)
+            except torch.cuda.OutOfMemoryError:
+                if paused_graphs or not self._token_graphs:
+                    raise
+                retry_without_graphs = True
+            if retry_without_graphs:
+                # Retry outside the exception handler so failed-call tensors can
+                # be released. Keep the same seed and every quality parameter.
+                pause_token_graphs()
+                logger.warning("Retrying with token graph workspaces released; quality settings unchanged")
+                wav = current_model.generate(**generate_kwargs)
         finally:
+            if paused_graphs:
+                for graph in self._token_graphs:
+                    graph.resume()
             if self.release_cuda_cache and self.device.startswith("cuda"):
                 torch.cuda.empty_cache()
                 logger.info(
